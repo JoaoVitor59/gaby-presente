@@ -5,6 +5,7 @@ Compartilhamento de tela entre dispositivos, direto pelo navegador. Um aparelho 
 - **Sem instalar nada** em quem assiste: funciona no navegador do computador, tablet ou celular.
 - **Só entra quem você permitir**: cada pedido de acesso precisa ser aceito por quem está compartilhando, que também pode remover alguém a qualquer momento.
 - **A imagem vai direto de um aparelho para o outro** (WebRTC, criptografado). O servidor só ajuda os dois a se encontrarem.
+- **Controle remoto** (computador com Windows): quem compartilha pode entregar o mouse e o teclado a quem está assistindo, e tirar quando quiser.
 - Até 10 pessoas assistindo ao mesmo compartilhamento, com som da aba/sistema quando o navegador oferece.
 
 ## Como rodar
@@ -25,9 +26,31 @@ Abra `http://localhost:3000` no computador que vai compartilhar. O terminal tamb
 3. No outro aparelho, digite o código em **Ver outro dispositivo** e clique em **Conectar**.
 4. Volte ao primeiro aparelho e clique em **Permitir** no pedido que apareceu.
 
+## Controle remoto
+
+Funciona quando o computador a ser controlado é um **Windows 10 ou 11 com o TelaLink rodando nele**. Um site sozinho não consegue mexer no mouse e no teclado; quem faz isso é um pequeno ajudante que o servidor compila e inicia sozinho na primeira vez (fica na pasta `.telalink`).
+
+1. No Windows, rode `npm start`. O terminal mostra um link com chave, parecido com `http://localhost:3000/#chave=3f9a…`.
+2. Abra **esse link** no navegador do próprio Windows e clique em **Compartilhar tela**, escolhendo a **tela inteira**.
+3. Depois de permitir a entrada de alguém, clique em **Dar controle** ao lado do nome da pessoa.
+4. No outro aparelho, o mouse (ou o toque) e o teclado sobre a imagem passam a valer no Windows. No celular, o botão **Teclado** abre o teclado para digitar.
+
+Para parar, clique em **Tirar controle**, **Remover** ou **Encerrar**.
+
+Cuidados e limites:
+
+- **Não passe o link com chave para ninguém.** É ele que prova que a página foi aberta por quem está na frente do computador; a chave muda toda vez que o servidor é iniciado. Para os outros aparelhos, passe só o código ou o botão **Copiar link**.
+- Dar o controle é dar acesso total ao computador para aquela pessoa. Só entregue a quem você confia.
+- Com mais de um monitor, compartilhe o principal — é nele que o mouse remoto se move.
+- Janelas abertas "como administrador", a tela de bloqueio e os avisos de permissão do Windows não aceitam o controle remoto.
+- Para as teclas baterem, os dois aparelhos devem usar o mesmo tipo de teclado (por exemplo, ABNT2 nos dois).
+- Atalhos que o navegador reserva (Ctrl+W, Alt+Tab, tecla Windows) só são enviados no Chrome/Edge em **Tela cheia**.
+
 ## Usando pela internet
 
 Para funcionar fora da sua rede, hospede o projeto em qualquer serviço que rode Node.js (comando de build `npm install`, comando de início `npm start`; a porta vem da variável `PORT`). O serviço precisa entregar a página por **HTTPS** — os navegadores só deixam compartilhar a tela em `https://` ou em `http://localhost`.
+
+O controle remoto não funciona com o servidor hospedado fora: para controlar um computador, o TelaLink precisa estar rodando nele.
 
 Algumas redes (4G/5G e redes corporativas, principalmente) bloqueiam a ligação direta entre os aparelhos. Nesse caso é preciso um servidor TURN, que você configura na variável `ICE_SERVERS`:
 
@@ -37,7 +60,7 @@ ICE_SERVERS='[{"urls":"stun:stun.l.google.com:19302"},{"urls":"turn:seu-servidor
 
 ## Limites
 
-- **É só visualização.** Um site não consegue mexer no mouse e no teclado de outro aparelho; controle remoto exigiria um programa instalado.
+- **Controle remoto só de computadores com Windows.** Chromebook, Mac, Linux e celulares podem controlar, mas não ser controlados.
 - **Celulares não compartilham a própria tela** (os navegadores de celular não permitem), mas podem compartilhar a câmera e assistir normalmente.
 
 ## Testes

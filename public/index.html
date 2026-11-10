@@ -71,6 +71,7 @@
           <h2>Pessoas</h2>
           <ul id="peer-list" class="peer-list"></ul>
           <p id="peer-empty" class="note">Ninguém pediu acesso ainda.</p>
+          <p id="control-note" class="note control-note" hidden></p>
         </article>
       </div>
 
@@ -83,13 +84,15 @@
     <!-- Assistindo -->
     <section id="view-watch" class="watch" hidden>
       <div id="stage" class="stage">
-        <video id="remote-video" autoplay playsinline muted></video>
+        <video id="remote-video" autoplay playsinline muted tabindex="-1"></video>
         <div id="watch-overlay" class="overlay">
           <div id="watch-spinner" class="spinner" aria-hidden="true"></div>
           <p id="watch-status" role="status">Conectando…</p>
         </div>
         <div class="stage-bar">
-          <span class="stage-title">Vendo <b id="watch-code"></b></span>
+          <span class="stage-title"><span id="watch-mode">Vendo</span> <b id="watch-code"></b></span>
+          <input id="kbd-proxy" class="kbd-proxy" aria-label="Digitar no computador remoto" autocapitalize="off" autocomplete="off" autocorrect="off" spellcheck="false" tabindex="-1">
+          <button id="btn-keyboard" class="btn small" hidden>Teclado</button>
           <button id="btn-sound" class="btn small" hidden>Ativar som</button>
           <button id="btn-full" class="btn small">Tela cheia</button>
           <button id="btn-leave" class="btn small danger">Sair</button>

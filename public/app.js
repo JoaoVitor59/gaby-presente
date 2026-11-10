@@ -22,6 +22,29 @@
   const digits = (value) => String(value).replace(/\D/g, '').slice(0, 9);
   const formatCode = (value) => digits(value).replace(/(\d{3})(?=\d)/g, '$1 ');
 
+  // Chave do controle remoto: vem no link que o servidor mostra no terminal
+  // (#chave=...). Sai da barra de endereço para não ser copiada sem querer.
+  let controlKey = null;
+  try {
+    controlKey = sessionStorage.getItem('telalink:key');
+  } catch {
+    /* sem armazenamento */
+  }
+  function readKeyFromLink() {
+    const found = location.hash.match(/chave=([0-9a-f]{32})/);
+    if (!found) return;
+    controlKey = found[1];
+    try {
+      sessionStorage.setItem('telalink:key', controlKey);
+    } catch {
+      /* sem armazenamento: vale até recarregar a página */
+    }
+    history.replaceState(null, '', location.pathname + location.search);
+  }
+  readKeyFromLink();
+  // colar o link numa aba que já está no TelaLink não recarrega a página
+  window.addEventListener('hashchange', readKeyFromLink);
+
   // ---------------------------------------------------------------- conexão
 
   let iceServers = [{ urls: 'stun:stun.l.google.com:19302' }];
@@ -82,7 +105,8 @@
 
   // ----------------------------------------------------------- compartilhar
 
-  let host = null; // { stream, ws, id, peers: Map(peer -> { name, state, link }) }
+  // { stream, kind, ws, id, control, canControl, peers: Map(peer -> { name, state, link, control }) }
+  let host = null;
 
   const PEER_STATUS = {
     pending: ['quer ver sua tela', 'wait'],
@@ -97,11 +121,11 @@
     let pending = 0;
 
     for (const [peer, info] of host?.peers ?? []) {
-      const [label, tone] = PEER_STATUS[info.state];
+      const [label, tone] = info.control ? ['Controlando este computador', 'wait'] : PEER_STATUS[info.state];
       if (info.state === 'pending') pending++;
 
       const item = document.createElement('li');
-      item.className = `peer ${info.state}`;
+      item.className = `peer ${info.state}${info.control ? ' controlling' : ''}`;
 
       const text = document.createElement('div');
       text.className = 'peer-info';
@@ -126,6 +150,9 @@
         button('Permitir', 'primary', () => acceptPeer(peer));
         button('Recusar', 'danger', () => removePeer(peer));
       } else {
+        if (host.canControl && (info.state === 'connected' || info.control)) {
+          button(info.control ? 'Tirar controle' : 'Dar controle', '', () => toggleControl(peer));
+        }
         button('Remover', 'danger', () => removePeer(peer));
       }
 
@@ -160,6 +187,29 @@
     renderPeers();
   }
 
+  function toggleControl(peer) {
+    const info = host?.peers.get(peer);
+    if (!info || !host.canControl) return;
+    info.control = !info.control;
+    sendTo(host.ws, { type: 'control', peer, on: info.control });
+    renderPeers();
+  }
+
+  // Explica, para quem compartilha, se dá para entregar o controle e por quê.
+  function controlNote() {
+    if (host.kind !== 'screen') return '';
+    if (host.control === 'unsupported') {
+      return 'Controle remoto indisponível: ele só funciona quando o TelaLink está rodando em um computador com Windows.';
+    }
+    if (host.control !== 'ok') {
+      return 'O controle remoto só pode ser liberado no computador onde o TelaLink está rodando, abrindo o link com chave que aparece no terminal.';
+    }
+    if (!host.canControl) {
+      return 'Para poder dar o controle do mouse e teclado, compartilhe a tela inteira (não uma janela ou aba).';
+    }
+    return 'Você pode dar o controle do mouse e teclado a quem estiver assistindo, e tirar quando quiser. Com mais de um monitor, compartilhe o principal.';
+  }
+
   function removePeer(peer) {
     const info = host?.peers.get(peer);
     if (!info) return;
@@ -172,9 +222,17 @@
   function onHostMessage(msg) {
     if (msg.type === 'hosted') {
       host.id = msg.id;
+      host.control = msg.control;
+      // O mouse remoto é posicionado em relação à tela inteira, então só faz
+      // sentido se for ela que está sendo compartilhada. (Nem todo navegador
+      // informa o que foi escolhido; na dúvida, deixa.)
+      const surface = host.stream.getVideoTracks()[0].getSettings().displaySurface;
+      host.canControl = msg.control === 'ok' && host.kind === 'screen' && (!surface || surface === 'monitor');
       $('host-code').textContent = formatCode(msg.id);
+      $('control-note').textContent = controlNote();
+      $('control-note').hidden = !$('control-note').textContent;
     } else if (msg.type === 'request') {
-      host.peers.set(msg.peer, { name: msg.name, state: 'pending', link: null });
+      host.peers.set(msg.peer, { name: msg.name, state: 'pending', link: null, control: false });
       renderPeers();
     } else if (msg.type === 'left') {
       host.peers.get(msg.peer)?.link?.close();
@@ -191,7 +249,10 @@
     try {
       stream =
         kind === 'screen'
-          ? await navigator.mediaDevices.getDisplayMedia({ video: { frameRate: { ideal: 30 } }, audio: true })
+          ? await navigator.mediaDevices.getDisplayMedia({
+              video: { frameRate: { ideal: 30 }, displaySurface: 'monitor' }, // já abre em "Tela inteira"
+              audio: true,
+            })
           : await navigator.mediaDevices.getUserMedia({
               video: { facingMode: { ideal: 'environment' }, width: { ideal: 1280 } },
               audio: false,
@@ -211,8 +272,8 @@
     video.addEventListener('ended', () => stopShare('Compartilhamento encerrado.'));
 
     const ws = openSocket();
-    host = { stream, ws, id: null, peers: new Map() };
-    ws.onopen = () => sendTo(ws, { type: 'host' });
+    host = { stream, kind, ws, id: null, control: null, canControl: false, peers: new Map() };
+    ws.onopen = () => sendTo(ws, { type: 'host', key: controlKey });
     ws.onmessage = (event) => host?.ws === ws && onHostMessage(JSON.parse(event.data));
     ws.onclose = () => {
       if (host?.ws === ws) stopShare('A conexão com o servidor caiu e o compartilhamento foi encerrado.');
@@ -220,6 +281,7 @@
 
     $('local-video').srcObject = stream;
     $('host-code').textContent = '— — —';
+    $('control-note').hidden = true;
     renderPeers();
     show('host');
   }
@@ -307,6 +369,9 @@
       case 'signal':
         watch.link?.handle(msg.data);
         break;
+      case 'control':
+        setControl(msg.on === true);
+        break;
       case 'error':
         endWatch(
           null,
@@ -352,6 +417,7 @@
   function endWatch(message, formError) {
     if (!watch) return;
     const { ws, link, wakeLock } = watch;
+    setControl(false, true);
     watch = null;
     link?.close();
     ws.close();
@@ -366,6 +432,147 @@
     }
     if (message) toast(message);
   }
+
+  // ------------------------------------------------------- controle remoto
+  // Quando quem compartilha dá o controle, o mouse, o toque e o teclado sobre
+  // o vídeo são enviados para o computador remoto.
+
+  let controlling = false;
+  let pendingMove = null;
+  let typed = ''; // o que o teclado do celular já mandou
+  const stage = $('stage');
+  const kbd = $('kbd-proxy');
+
+  const sendInput = (data) => {
+    if (watch && controlling) sendTo(watch.ws, { type: 'input', ...data });
+  };
+  const tapKey = (code) => {
+    sendInput({ kind: 'key', code, down: true });
+    sendInput({ kind: 'key', code, down: false });
+  };
+
+  function setControl(on, silent) {
+    if (controlling === on) return;
+    if (!on) sendInput({ kind: 'release' });
+    controlling = on;
+    pendingMove = null;
+    kbd.value = typed = '';
+    stage.classList.toggle('controlling', on);
+    $('watch-mode').textContent = on ? 'Controlando' : 'Vendo';
+    $('btn-keyboard').hidden = !(on && matchMedia('(pointer: coarse)').matches);
+    if (on) {
+      remoteVideo.focus({ preventScroll: true });
+    } else {
+      kbd.blur();
+      navigator.keyboard?.unlock?.();
+    }
+    if (!silent) toast(on ? 'Você recebeu o controle do mouse e teclado.' : 'O controle foi retirado.');
+  }
+
+  // Posição do ponteiro dentro da imagem (0 a 1), descontando as faixas pretas.
+  function videoPoint(event) {
+    const { videoWidth, videoHeight } = remoteVideo;
+    if (!videoWidth || !videoHeight) return null;
+    const box = remoteVideo.getBoundingClientRect();
+    const scale = Math.min(box.width / videoWidth, box.height / videoHeight);
+    const width = videoWidth * scale;
+    const height = videoHeight * scale;
+    const x = (event.clientX - box.left - (box.width - width) / 2) / width;
+    const y = (event.clientY - box.top - (box.height - height) / 2) / height;
+    const clamp = (v) => Math.min(1, Math.max(0, v));
+    return { x: clamp(x), y: clamp(y), inside: x >= 0 && x <= 1 && y >= 0 && y <= 1 };
+  }
+
+  remoteVideo.addEventListener('pointermove', (event) => {
+    const point = controlling && videoPoint(event);
+    if (!point) return;
+    // no máximo um movimento por quadro
+    if (!pendingMove) {
+      requestAnimationFrame(() => {
+        if (pendingMove) sendInput({ kind: 'move', ...pendingMove });
+        pendingMove = null;
+      });
+    }
+    pendingMove = { x: point.x, y: point.y };
+  });
+
+  remoteVideo.addEventListener('pointerdown', (event) => {
+    const point = controlling && videoPoint(event);
+    if (!point?.inside) return;
+    event.preventDefault();
+    // não tira o foco do teclado do celular, se ele estiver aberto
+    if (document.activeElement !== kbd) remoteVideo.focus({ preventScroll: true });
+    remoteVideo.setPointerCapture(event.pointerId);
+    pendingMove = null;
+    sendInput({ kind: 'button', button: event.button, down: true, x: point.x, y: point.y });
+  });
+
+  remoteVideo.addEventListener('pointerup', (event) => {
+    const point = controlling && videoPoint(event);
+    if (point) sendInput({ kind: 'button', button: event.button, down: false, x: point.x, y: point.y });
+  });
+  remoteVideo.addEventListener('pointercancel', () => sendInput({ kind: 'release' }));
+
+  // o clique no vídeo não pode roubar o foco nem abrir o menu do navegador
+  remoteVideo.addEventListener('mousedown', (event) => controlling && event.preventDefault());
+  remoteVideo.addEventListener('contextmenu', (event) => controlling && event.preventDefault());
+
+  remoteVideo.addEventListener(
+    'wheel',
+    (event) => {
+      const point = controlling && videoPoint(event);
+      if (!point) return;
+      event.preventDefault();
+      const unit = [1, 40, 800][event.deltaMode] ?? 1; // pixels, linhas ou páginas
+      sendInput({ kind: 'wheel', dx: event.deltaX * unit, dy: event.deltaY * unit, x: point.x, y: point.y });
+    },
+    { passive: false },
+  );
+
+  // Teclado: só quando o foco está no vídeo (ou no campo do teclado do
+  // celular), para os botões da página continuarem funcionando normalmente.
+  function onKey(event, down) {
+    if (!controlling) return;
+    if (document.activeElement !== remoteVideo && document.activeElement !== kbd) return;
+    if (event.code && event.code !== 'Unidentified') {
+      event.preventDefault();
+      sendInput({ kind: 'key', code: event.code, down });
+    } else if (down && event.key === 'Enter') {
+      // teclado virtual: não informa a tecla física
+      event.preventDefault();
+      tapKey('Enter');
+    }
+  }
+  document.addEventListener('keydown', (event) => onKey(event, true));
+  document.addEventListener('keyup', (event) => onKey(event, false));
+
+  // Teclado do celular: compara o que está no campo com o que já foi mandado
+  // e envia só a diferença (funciona também com corretor e sugestões).
+  kbd.addEventListener('input', () => {
+    const now = kbd.value;
+    let same = 0;
+    while (same < typed.length && same < now.length && typed[same] === now[same]) same++;
+    for (let i = typed.length; i > same; i--) tapKey('Backspace');
+    if (now.length > same) sendInput({ kind: 'text', text: now.slice(same) });
+    typed = now;
+  });
+  kbd.addEventListener('beforeinput', (event) => {
+    if (kbd.value === '' && event.inputType.startsWith('delete')) tapKey('Backspace');
+  });
+  kbd.addEventListener('blur', () => {
+    kbd.value = typed = '';
+  });
+  $('btn-keyboard').addEventListener('click', () => kbd.focus({ preventScroll: true }));
+
+  // Depois de usar um botão da barra (tela cheia, som), o teclado volta a
+  // valer para o computador remoto sem precisar clicar no vídeo de novo.
+  stage.addEventListener('click', (event) => {
+    const button = event.target.closest('.stage-bar button');
+    if (controlling && button && button.id !== 'btn-keyboard') remoteVideo.focus({ preventScroll: true });
+  });
+
+  // Saiu da página com algo apertado? Solta tudo no computador remoto.
+  window.addEventListener('blur', () => sendInput({ kind: 'release' }));
 
   function guessDevice() {
     const ua = navigator.userAgent;
@@ -420,6 +627,8 @@
   });
   document.addEventListener('fullscreenchange', () => {
     $('btn-full').textContent = document.fullscreenElement ? 'Sair da tela cheia' : 'Tela cheia';
+    // em tela cheia o Chrome deixa capturar também Esc, Alt+Tab e a tecla Windows
+    if (document.fullscreenElement && controlling) navigator.keyboard?.lock?.().catch(() => {});
   });
   remoteVideo.addEventListener('playing', () => watch && setOverlay(null));
   document.addEventListener('visibilitychange', () => {

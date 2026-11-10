@@ -10,6 +10,7 @@ const path = require('path');
 const os = require('os');
 const crypto = require('crypto');
 const { WebSocketServer } = require('ws');
+const { createInjector } = require('./input.js');
 
 const PUBLIC_DIR = path.join(__dirname, 'public');
 const MAX_VIEWERS = 10; // por compartilhamento
@@ -74,9 +75,13 @@ function serveStatic(req, res, iceServers) {
   });
 }
 
-function createServer() {
+// injector: quem executa mouse e teclado neste computador (null = sem controle
+// remoto). controlKey: chave que a página precisa apresentar para poder
+// oferecer o controle — só quem vê o terminal deste computador a conhece.
+function createServer({ injector = null, controlKey = null } = {}) {
   const iceServers = loadIceServers();
-  // código de 9 dígitos -> { id, host, viewers: Map(peer -> { ws, name, accepted }) }
+  // código de 9 dígitos -> { id, host, control, viewers }
+  // viewers: Map(peer -> { ws, name, accepted, control, held })
   const sessions = new Map();
 
   const server = http.createServer((req, res) => serveStatic(req, res, iceServers));
@@ -94,6 +99,60 @@ function createServer() {
     return id;
   }
 
+  const keyMatches = (key) =>
+    typeof controlKey === 'string' &&
+    typeof key === 'string' &&
+    key.length === controlKey.length &&
+    crypto.timingSafeEqual(Buffer.from(key), Buffer.from(controlKey));
+
+  // Solta as teclas e botões que a pessoa deixou apertados, para nada ficar
+  // "preso" no computador controlado quando o controle acaba.
+  function releaseHeld(viewer) {
+    for (const item of viewer.held) {
+      if (item.startsWith('button:')) injector.button(Number(item.slice(7)), false);
+      else injector.key(item.slice(4), false);
+    }
+    viewer.held.clear();
+  }
+
+  function applyInput(viewer, msg) {
+    const num = (value) => (typeof value === 'number' && Number.isFinite(value) ? value : null);
+    const down = msg.down === true;
+    const x = num(msg.x);
+    const y = num(msg.y);
+    const moveIfGiven = () => {
+      if (x !== null && y !== null) injector.move(x, y);
+    };
+    const track = (item) => (down ? viewer.held.add(item) : viewer.held.delete(item));
+
+    switch (msg.kind) {
+      case 'move':
+        moveIfGiven();
+        return;
+      case 'button':
+        if (!down && !viewer.held.has(`button:${msg.button}`)) return;
+        moveIfGiven();
+        if (injector.button(msg.button, down)) track(`button:${msg.button}`);
+        return;
+      case 'wheel':
+        moveIfGiven();
+        injector.wheel(num(msg.dx) ?? 0, num(msg.dy) ?? 0);
+        return;
+      case 'key':
+        if (typeof msg.code !== 'string') return;
+        if (!down && !viewer.held.has(`key:${msg.code}`)) return;
+        if (injector.key(msg.code, down)) track(`key:${msg.code}`);
+        return;
+      case 'text':
+        if (typeof msg.text === 'string') injector.text(msg.text.slice(0, 200));
+        return;
+      case 'release':
+        releaseHeld(viewer);
+        return;
+      default:
+    }
+  }
+
   // Tira a conexão da sessão em que ela está (se estiver em alguma).
   function detach(ws) {
     const session = sessions.get(ws.sessionId);
@@ -105,11 +164,16 @@ function createServer() {
     if (role === 'host') {
       sessions.delete(session.id);
       for (const viewer of session.viewers.values()) {
+        releaseHeld(viewer);
         viewer.ws.role = null;
         viewer.ws.sessionId = null;
         send(viewer.ws, { type: 'ended' });
       }
-    } else if (role === 'viewer' && session.viewers.delete(ws.peerId)) {
+    } else if (role === 'viewer') {
+      const viewer = session.viewers.get(ws.peerId);
+      if (!viewer) return;
+      releaseHeld(viewer);
+      session.viewers.delete(ws.peerId);
       send(session.host, { type: 'left', peer: ws.peerId });
     }
   }
@@ -119,10 +183,12 @@ function createServer() {
       case 'host': {
         if (ws.role) return;
         const id = newSessionId();
-        sessions.set(id, { id, host: ws, viewers: new Map() });
+        // 'ok' | 'no-key' (página aberta sem a chave) | 'unsupported' (não é Windows)
+        const control = !injector ? 'unsupported' : keyMatches(msg.key) ? 'ok' : 'no-key';
+        sessions.set(id, { id, host: ws, control: control === 'ok', viewers: new Map() });
         ws.role = 'host';
         ws.sessionId = id;
-        send(ws, { type: 'hosted', id });
+        send(ws, { type: 'hosted', id, control });
         return;
       }
 
@@ -143,7 +209,7 @@ function createServer() {
         ws.role = 'viewer';
         ws.sessionId = id;
         ws.peerId = crypto.randomBytes(8).toString('hex');
-        session.viewers.set(ws.peerId, { ws, name, accepted: false });
+        session.viewers.set(ws.peerId, { ws, name, accepted: false, control: false, held: new Set() });
         send(session.host, { type: 'request', peer: ws.peerId, name });
         send(ws, { type: 'waiting' });
         return;
@@ -160,11 +226,32 @@ function createServer() {
           viewer.accepted = true;
           send(viewer.ws, { type: 'accepted' });
         } else {
+          releaseHeld(viewer);
           session.viewers.delete(msg.peer);
           viewer.ws.role = null;
           viewer.ws.sessionId = null;
           send(viewer.ws, { type: viewer.accepted ? 'removed' : 'rejected' });
         }
+        return;
+      }
+
+      // Quem compartilha dá (ou tira) o controle do mouse e teclado.
+      case 'control': {
+        if (ws.role !== 'host') return;
+        const session = sessions.get(ws.sessionId);
+        const viewer = session?.viewers.get(msg.peer);
+        if (!session?.control || !viewer?.accepted) return;
+        viewer.control = msg.on === true;
+        if (!viewer.control) releaseHeld(viewer);
+        send(viewer.ws, { type: 'control', on: viewer.control });
+        return;
+      }
+
+      // Mouse e teclado de quem recebeu o controle.
+      case 'input': {
+        if (ws.role !== 'viewer') return;
+        const viewer = sessions.get(ws.sessionId)?.viewers.get(ws.peerId);
+        if (viewer?.control) applyInput(viewer, msg);
         return;
       }
 
@@ -227,9 +314,16 @@ function createServer() {
 
 if (require.main === module) {
   const port = Number(process.env.PORT) || 3000;
-  createServer().listen(port, () => {
+  const injector = createInjector();
+  const controlKey = crypto.randomBytes(16).toString('hex');
+  createServer({ injector, controlKey }).listen(port, () => {
     console.log(`TelaLink rodando na porta ${port}`);
-    console.log(`  Neste computador:  http://localhost:${port}`);
+    if (injector) {
+      console.log(`  Neste computador:  http://localhost:${port}/#chave=${controlKey}`);
+      console.log('                     (este link com chave libera o controle remoto; não passe para ninguém)');
+    } else {
+      console.log(`  Neste computador:  http://localhost:${port}`);
+    }
     for (const addrs of Object.values(os.networkInterfaces())) {
       for (const addr of addrs ?? []) {
         if (addr.family === 'IPv4' && !addr.internal) {

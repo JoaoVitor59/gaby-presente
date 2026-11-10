@@ -226,7 +226,9 @@ input::placeholder { color: color-mix(in srgb, var(--muted) 70%, transparent); }
 .peer-status.ok { color: var(--ok); }
 .peer-status.bad { color: var(--danger); }
 .peer-status.wait { color: var(--warn); }
-.peer-actions { display: flex; gap: 8px; }
+.peer-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.peer.controlling { border-color: var(--warn); }
+.control-note { margin-top: 12px; }
 
 .preview {
   display: block;
@@ -260,6 +262,23 @@ input::placeholder { color: color-mix(in srgb, var(--muted) 70%, transparent); }
   width: 100%;
   object-fit: contain;
   background: #000;
+}
+
+/* Com o controle ativo, o toque e o mouse vão para o computador remoto. */
+.stage.controlling video { touch-action: none; cursor: crosshair; outline: none; }
+.stage.controlling #watch-mode { color: #ffd27a; font-weight: 600; }
+
+/* Campo invisível que abre o teclado do celular. 16px evita o zoom do iOS. */
+.kbd-proxy {
+  position: absolute;
+  width: 1px;
+  min-height: 0;
+  height: 1px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  opacity: 0;
+  font-size: 16px;
 }
 
 .overlay {
