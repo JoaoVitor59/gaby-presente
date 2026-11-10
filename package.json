@@ -1,0 +1,17 @@
+{
+  "name": "telalink",
+  "version": "1.0.0",
+  "description": "Compartilhamento de tela entre dispositivos pelo navegador (WebRTC)",
+  "private": true,
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "test": "node --test"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "ws": "^8.18.0"
+  }
+}
