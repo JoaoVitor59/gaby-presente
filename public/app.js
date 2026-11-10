@@ -231,9 +231,19 @@
       $('host-code').textContent = formatCode(msg.id);
       $('control-note').textContent = controlNote();
       $('control-note').hidden = !$('control-note').textContent;
+      $('host-note').textContent = msg.unattended
+        ? 'Este é o código fixo deste computador. Quem digitar o código e a senha entra direto, sem pedir permissão.'
+        : msg.fixed
+          ? 'Este é o código fixo deste computador. Ninguém entra sem a sua permissão.'
+          : 'Passe o código ou o link para quem vai assistir. Ninguém entra sem a sua permissão.';
     } else if (msg.type === 'request') {
       host.peers.set(msg.peer, { name: msg.name, state: 'pending', link: null, control: false });
       renderPeers();
+      // quem entrou com a senha não espera permissão e já recebe o controle
+      if (msg.auto) {
+        acceptPeer(msg.peer);
+        if (host.canControl) toggleControl(msg.peer);
+      }
     } else if (msg.type === 'left') {
       host.peers.get(msg.peer)?.link?.close();
       host.peers.delete(msg.peer);
@@ -375,10 +385,13 @@
       case 'error':
         endWatch(
           null,
-          msg.code === 'full'
-            ? 'Esse compartilhamento já atingiu o limite de pessoas.'
-            : 'Não encontramos nenhum compartilhamento com esse código. Confira os números.',
+          {
+            full: 'Esse compartilhamento já atingiu o limite de pessoas.',
+            password: $('join-password').value ? 'Senha incorreta.' : 'Esse computador pede senha.',
+            locked: 'Muitas senhas erradas. A entrada por senha foi travada até o TelaLink ser reiniciado naquele computador.',
+          }[msg.code] ?? 'Não encontramos nenhum compartilhamento com esse código. Confira os números.',
         );
+        if (msg.code === 'password') $('join-password').focus();
         break;
       case 'rejected':
         endWatch(null, 'O pedido de acesso foi recusado.');
@@ -398,7 +411,8 @@
     const name = $('join-name').value.trim() || guessDevice();
     const ws = openSocket();
     watch = { ws, id: code, link: null, wakeLock: null };
-    ws.onopen = () => sendTo(ws, { type: 'join', id: code, name });
+    const password = $('join-password').value || undefined;
+    ws.onopen = () => sendTo(ws, { type: 'join', id: code, name, password });
     ws.onmessage = (event) => watch?.ws === ws && onWatchMessage(JSON.parse(event.data));
     ws.onclose = () => {
       if (watch?.ws === ws) endWatch('A conexão com o servidor caiu.');
@@ -431,6 +445,7 @@
       $('join-code').focus();
     }
     if (message) toast(message);
+    else $('toast').hidden = true; // não deixa um aviso antigo sobre a tela inicial
   }
 
   // ------------------------------------------------------- controle remoto

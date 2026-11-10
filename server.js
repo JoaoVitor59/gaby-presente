@@ -14,7 +14,10 @@ const { createInjector } = require('./input.js');
 
 const PUBLIC_DIR = path.join(__dirname, 'public');
 const MAX_VIEWERS = 10; // por compartilhamento
-const MAX_FAILED_JOINS = 10; // códigos errados por conexão antes de derrubar
+const MAX_FAILED_JOINS = 10; // códigos ou senhas erradas por conexão antes de derrubar
+const MAX_BAD_PASSWORDS = 20; // senhas erradas seguidas antes de travar a entrada por senha
+const MIN_PASSWORD = 8;
+const CONFIG_FILE = path.join(__dirname, 'telalink.config.json');
 const MIME = {
   '.html': 'text/html; charset=utf-8',
   '.js': 'text/javascript; charset=utf-8',
@@ -75,11 +78,42 @@ function serveStatic(req, res, iceServers) {
   });
 }
 
+// Código fixo e senha deste computador, guardados em telalink.config.json
+// (criado na primeira vez). Sem senha, cada entrada continua pedindo permissão.
+function loadConfig(file = CONFIG_FILE) {
+  let saved = {};
+  try {
+    saved = JSON.parse(fs.readFileSync(file, 'utf8'));
+  } catch (err) {
+    if (err.code !== 'ENOENT') console.warn(`Não foi possível ler ${path.basename(file)}: ${err.message}`);
+  }
+  const fixedId = /^\d{9}$/.test(saved.codigo) ? saved.codigo : String(crypto.randomInt(100_000_000, 1_000_000_000));
+  let password = typeof saved.senha === 'string' ? saved.senha : '';
+  if (password && password.length < MIN_PASSWORD) {
+    console.warn(`A senha em ${path.basename(file)} precisa ter pelo menos ${MIN_PASSWORD} caracteres; ignorada.`);
+    password = '';
+  }
+  if (saved.codigo !== fixedId || typeof saved.senha !== 'string') {
+    try {
+      fs.writeFileSync(file, `${JSON.stringify({ codigo: fixedId, senha: saved.senha ?? '' }, null, 2)}\n`);
+    } catch (err) {
+      console.warn(`Não foi possível salvar ${path.basename(file)}: ${err.message}`);
+    }
+  }
+  return { fixedId, password };
+}
+
 // injector: quem executa mouse e teclado neste computador (null = sem controle
-// remoto). controlKey: chave que a página precisa apresentar para poder
-// oferecer o controle — só quem vê o terminal deste computador a conhece.
-function createServer({ injector = null, controlKey = null } = {}) {
+// remoto). controlKey: chave que só a página aberta neste computador conhece
+// (aparece no terminal); é ela que libera o controle e o código fixo.
+// fixedId: código fixo deste computador. password: se definida, quem digitar
+// o código fixo e a senha entra sem pedir permissão.
+function createServer({ injector = null, controlKey = null, fixedId = null, password = '' } = {}) {
   const iceServers = loadIceServers();
+  let badPasswords = 0;
+  const digest = (text) => crypto.createHash('sha256').update(String(text)).digest();
+  const passwordMatches = (given) =>
+    typeof given === 'string' && crypto.timingSafeEqual(digest(given), digest(password));
   // código de 9 dígitos -> { id, host, control, viewers }
   // viewers: Map(peer -> { ws, name, accepted, control, held })
   const sessions = new Map();
@@ -182,13 +216,17 @@ function createServer({ injector = null, controlKey = null } = {}) {
     switch (msg.type) {
       case 'host': {
         if (ws.role) return;
-        const id = newSessionId();
+        const local = keyMatches(msg.key); // página aberta neste computador
+        // O código fixo é só deste computador (e de um compartilhamento por vez).
+        const fixed = local && fixedId !== null && !sessions.has(fixedId);
+        const id = fixed ? fixedId : newSessionId();
         // 'ok' | 'no-key' (página aberta sem a chave) | 'unsupported' (não é Windows)
-        const control = !injector ? 'unsupported' : keyMatches(msg.key) ? 'ok' : 'no-key';
-        sessions.set(id, { id, host: ws, control: control === 'ok', viewers: new Map() });
+        const control = !injector ? 'unsupported' : local ? 'ok' : 'no-key';
+        const unattended = fixed && password !== '';
+        sessions.set(id, { id, host: ws, control: control === 'ok', unattended, viewers: new Map() });
         ws.role = 'host';
         ws.sessionId = id;
-        send(ws, { type: 'hosted', id, control });
+        send(ws, { type: 'hosted', id, control, fixed, unattended });
         return;
       }
 
@@ -205,12 +243,26 @@ function createServer({ injector = null, controlKey = null } = {}) {
           send(ws, { type: 'error', code: 'full' });
           return;
         }
+        // Com senha definida, o código fixo só abre com ela — e aí entra direto.
+        if (session.unattended) {
+          if (badPasswords >= MAX_BAD_PASSWORDS) {
+            send(ws, { type: 'error', code: 'locked' });
+            return;
+          }
+          if (!passwordMatches(msg.password)) {
+            if (msg.password) badPasswords++;
+            send(ws, { type: 'error', code: 'password' });
+            if (++ws.failedJoins >= MAX_FAILED_JOINS) ws.close(1008, 'too many attempts');
+            return;
+          }
+          badPasswords = 0;
+        }
         const name = String(msg.name ?? '').trim().slice(0, 40) || 'Dispositivo';
         ws.role = 'viewer';
         ws.sessionId = id;
         ws.peerId = crypto.randomBytes(8).toString('hex');
         session.viewers.set(ws.peerId, { ws, name, accepted: false, control: false, held: new Set() });
-        send(session.host, { type: 'request', peer: ws.peerId, name });
+        send(session.host, { type: 'request', peer: ws.peerId, name, auto: session.unattended });
         send(ws, { type: 'waiting' });
         return;
       }
@@ -316,14 +368,18 @@ if (require.main === module) {
   const port = Number(process.env.PORT) || 3000;
   const injector = createInjector();
   const controlKey = crypto.randomBytes(16).toString('hex');
-  createServer({ injector, controlKey }).listen(port, () => {
+  const { fixedId, password } = loadConfig();
+  createServer({ injector, controlKey, fixedId, password }).listen(port, () => {
     console.log(`TelaLink rodando na porta ${port}`);
-    if (injector) {
-      console.log(`  Neste computador:  http://localhost:${port}/#chave=${controlKey}`);
-      console.log('                     (este link com chave libera o controle remoto; não passe para ninguém)');
-    } else {
-      console.log(`  Neste computador:  http://localhost:${port}`);
-    }
+    console.log(`  Neste computador:  http://localhost:${port}/#chave=${controlKey}`);
+    console.log('                     (link só deste computador; não passe para ninguém)');
+    console.log(`  Código fixo:       ${fixedId.replace(/(\d{3})(?=\d)/g, '$1 ')}`);
+    console.log(
+      password
+        ? '  Entrada:           direto, com a senha de telalink.config.json'
+        : '  Entrada:           pedindo permissão (defina "senha" em telalink.config.json para entrar direto)',
+    );
+    if (!injector) console.log('  Controle remoto:   indisponível (só no Windows)');
     for (const addrs of Object.values(os.networkInterfaces())) {
       for (const addr of addrs ?? []) {
         if (addr.family === 'IPv4' && !addr.internal) {
@@ -334,4 +390,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { createServer };
+module.exports = { createServer, loadConfig };

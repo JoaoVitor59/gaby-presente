@@ -337,3 +337,132 @@ test('posições e rolagem são limitadas ao que o Windows aceita', () => {
     'k 0 98 6',
   ]);
 });
+
+// ------------------------------------------------- código fixo e entrada direta
+
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
+const { loadConfig } = require('../server.js');
+
+async function fixedServer(password) {
+  const lines = [];
+  const srv = createServer({
+    injector: new Injector((line) => lines.push(line)),
+    controlKey: CONTROL_KEY,
+    fixedId: '123456789',
+    password,
+  });
+  srv.listen(0);
+  await once(srv, 'listening');
+  const connect = async () => {
+    const ws = new WebSocket(`ws://localhost:${srv.address().port}/ws`);
+    const queue = [];
+    const waiters = [];
+    ws.on('message', (raw) => {
+      const msg = JSON.parse(raw);
+      const waiter = waiters.shift();
+      if (waiter) waiter(msg);
+      else queue.push(msg);
+    });
+    await once(ws, 'open');
+    return {
+      ws,
+      send: (msg) => ws.send(JSON.stringify(msg)),
+      next: () => (queue.length ? Promise.resolve(queue.shift()) : new Promise((r) => waiters.push(r))),
+      close: () => ws.close(),
+    };
+  };
+  return { srv, connect };
+}
+
+test('o código fixo é só da página aberta no próprio computador', async () => {
+  const { srv, connect } = await fixedServer('');
+  const local = await connect();
+  local.send({ type: 'host', key: CONTROL_KEY });
+  const first = await local.next();
+  assert.equal(first.id, '123456789');
+  assert.equal(first.fixed, true);
+  assert.equal(first.unattended, false);
+
+  // segunda página local ao mesmo tempo e página sem a chave: código sorteado
+  for (const key of [CONTROL_KEY, undefined]) {
+    const other = await connect();
+    other.send({ type: 'host', key });
+    const reply = await other.next();
+    assert.notEqual(reply.id, '123456789');
+    assert.equal(reply.fixed, false);
+    other.close();
+  }
+
+  // sem senha definida, entrar continua pedindo permissão
+  const viewer = await connect();
+  viewer.send({ type: 'join', id: '123456789', password: 'qualquer' });
+  const request = await local.next();
+  assert.equal(request.auto, false);
+  assert.deepEqual(await viewer.next(), { type: 'waiting' });
+
+  // o código volta a valer depois que o compartilhamento termina
+  local.close();
+  await viewer.next(); // ended
+  const again = await connect();
+  again.send({ type: 'host', key: CONTROL_KEY });
+  assert.equal((await again.next()).id, '123456789');
+  for (const c of [viewer, again]) c.close();
+  srv.close();
+});
+
+test('com senha: só entra direto quem acerta a senha', async () => {
+  const { srv, connect } = await fixedServer('senha-bem-longa');
+  const host = await connect();
+  host.send({ type: 'host', key: CONTROL_KEY });
+  assert.equal((await host.next()).unattended, true);
+
+  const viewer = await connect();
+  for (const password of [undefined, '', 'errada', 'senha-bem-longa ', 42, { a: 1 }]) {
+    viewer.send({ type: 'join', id: '123456789', password });
+    assert.deepEqual(await viewer.next(), { type: 'error', code: 'password' }, String(password));
+  }
+  viewer.send({ type: 'join', id: '123 456 789', name: 'Chromebook', password: 'senha-bem-longa' });
+  assert.deepEqual(await viewer.next(), { type: 'waiting' });
+  // quem compartilha só ficou sabendo de quem acertou
+  const request = await host.next();
+  assert.equal(request.type, 'request');
+  assert.equal(request.name, 'Chromebook');
+  assert.equal(request.auto, true);
+
+  for (const c of [host, viewer]) c.close();
+  srv.close();
+});
+
+test('muitas senhas erradas travam a entrada por senha', async () => {
+  const { srv, connect } = await fixedServer('senha-bem-longa');
+  const host = await connect();
+  host.send({ type: 'host', key: CONTROL_KEY });
+  await host.next();
+
+  for (let i = 0; i < 20; i++) {
+    const guesser = await connect(); // conexão nova a cada tentativa
+    guesser.send({ type: 'join', id: '123456789', password: `chute-${i}` });
+    assert.equal((await guesser.next()).code, 'password');
+    guesser.close();
+  }
+  const viewer = await connect();
+  viewer.send({ type: 'join', id: '123456789', password: 'senha-bem-longa' });
+  assert.deepEqual(await viewer.next(), { type: 'error', code: 'locked' });
+  for (const c of [host, viewer]) c.close();
+  srv.close();
+});
+
+test('a configuração guarda o código fixo e recusa senha curta', () => {
+  const file = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'telalink-')), 'config.json');
+  const first = loadConfig(file);
+  assert.match(first.fixedId, /^\d{9}$/);
+  assert.equal(first.password, '');
+  assert.deepEqual(loadConfig(file), first); // o mesmo código na vez seguinte
+
+  fs.writeFileSync(file, JSON.stringify({ codigo: first.fixedId, senha: 'curta' }));
+  assert.equal(loadConfig(file).password, '');
+  fs.writeFileSync(file, JSON.stringify({ codigo: first.fixedId, senha: 'senha-bem-longa' }));
+  assert.deepEqual(loadConfig(file), { fixedId: first.fixedId, password: 'senha-bem-longa' });
+});

@@ -46,6 +46,8 @@
             <input id="join-code" class="code-input" inputmode="numeric" placeholder="000 000 000" maxlength="11" required aria-describedby="join-error">
             <label for="join-name">Seu nome <span class="optional">(aparece no pedido de acesso)</span></label>
             <input id="join-name" maxlength="40" placeholder="Ex.: Celular da Ana">
+            <label for="join-password">Senha <span class="optional">(só se o computador tiver uma)</span></label>
+            <input id="join-password" type="password" maxlength="100" autocomplete="off">
             <p id="join-error" class="error" role="alert" hidden></p>
             <button class="btn primary" type="submit">Conectar</button>
           </form>
@@ -64,7 +66,7 @@
             <button id="btn-copy-link" class="btn">Copiar link</button>
             <button id="btn-stop" class="btn danger">Encerrar</button>
           </div>
-          <p class="note">Passe o código ou o link para quem vai assistir. Ninguém entra sem a sua permissão.</p>
+          <p id="host-note" class="note">Passe o código ou o link para quem vai assistir. Ninguém entra sem a sua permissão.</p>
         </article>
 
         <article class="card">

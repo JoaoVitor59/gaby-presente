@@ -46,6 +46,27 @@ Cuidados e limites:
 - Para as teclas baterem, os dois aparelhos devem usar o mesmo tipo de teclado (por exemplo, ABNT2 nos dois).
 - Atalhos que o navegador reserva (Ctrl+W, Alt+Tab, tecla Windows) só são enviados no Chrome/Edge em **Tela cheia**.
 
+## Código fixo e entrada sem pedir permissão
+
+Na primeira vez que o servidor roda, ele cria o arquivo `telalink.config.json` na pasta do projeto, com o **código fixo** daquele computador:
+
+```json
+{
+  "codigo": "482913765",
+  "senha": ""
+}
+```
+
+- O código é sempre o mesmo naquele computador, desde que a página seja aberta pelo link com chave do terminal. Cada computador tem o seu.
+- Com `"senha"` vazia, cada entrada continua pedindo permissão.
+- Com uma senha de **8 caracteres ou mais**, quem digitar o código e a senha entra direto e já recebe o controle (no Windows, compartilhando a tela inteira). Reinicie o servidor depois de mudar o arquivo.
+
+Cuidados:
+
+- Com a senha definida, **código + senha dão acesso total ao computador**. Use uma senha longa, que você não usa em outro lugar. Vinte senhas erradas seguidas travam a entrada por senha até o servidor ser reiniciado.
+- O arquivo guarda a senha em texto simples e não vai para o GitHub (está no `.gitignore`).
+- O computador ainda precisa estar com o servidor rodando e com **Compartilhar tela** já clicado: o navegador não deixa iniciar o compartilhamento sem alguém clicar na frente dele.
+
 ## Usando pela internet
 
 Para funcionar fora da sua rede, hospede o projeto em qualquer serviço que rode Node.js (comando de build `npm install`, comando de início `npm start`; a porta vem da variável `PORT`). O serviço precisa entregar a página por **HTTPS** — os navegadores só deixam compartilhar a tela em `https://` ou em `http://localhost`.
