@@ -1,0 +1,110 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>TelaLink — compartilhe sua tela</title>
+  <meta name="description" content="Compartilhe a tela do seu dispositivo com outro, direto pelo navegador.">
+  <meta name="color-scheme" content="light dark">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%234f46e5'/%3E%3Crect x='6' y='8' width='20' height='13' rx='2.5' fill='none' stroke='%23fff' stroke-width='2.2'/%3E%3Cpath d='M12 25h8' stroke='%23fff' stroke-width='2.2' stroke-linecap='round'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="top">
+    <a class="brand" href="./" aria-label="TelaLink — início">
+      <svg viewBox="0 0 32 32" width="30" height="30" aria-hidden="true">
+        <rect width="32" height="32" rx="8" fill="var(--accent)"/>
+        <rect x="6" y="8" width="20" height="13" rx="2.5" fill="none" stroke="#fff" stroke-width="2.2"/>
+        <path d="M12 25h8" stroke="#fff" stroke-width="2.2" stroke-linecap="round"/>
+      </svg>
+      <span>TelaLink</span>
+    </a>
+  </header>
+
+  <main>
+    <!-- Início -->
+    <section id="view-home" class="home">
+      <h1>Sua tela, em qualquer dispositivo</h1>
+      <p class="lead">Compartilhe a tela e veja de outro computador, tablet ou celular. Sem instalar nada: a imagem vai direto de um aparelho para o outro.</p>
+
+      <div class="grid">
+        <article class="card">
+          <h2>Compartilhar este dispositivo</h2>
+          <p>Você recebe um código de 9 dígitos. Quem tiver o código pede para entrar, e só vê a tela depois que você permitir.</p>
+          <div class="actions">
+            <button id="btn-share-screen" class="btn primary">Compartilhar tela</button>
+            <button id="btn-share-camera" class="btn">Compartilhar câmera</button>
+          </div>
+          <p id="share-note" class="note" hidden></p>
+        </article>
+
+        <article class="card">
+          <h2>Ver outro dispositivo</h2>
+          <p>Digite o código que aparece no dispositivo que está compartilhando.</p>
+          <form id="join-form" autocomplete="off">
+            <label for="join-code">Código</label>
+            <input id="join-code" class="code-input" inputmode="numeric" placeholder="000 000 000" maxlength="11" required aria-describedby="join-error">
+            <label for="join-name">Seu nome <span class="optional">(aparece no pedido de acesso)</span></label>
+            <input id="join-name" maxlength="40" placeholder="Ex.: Celular da Ana">
+            <label for="join-password">Senha <span class="optional">(só se o computador tiver uma)</span></label>
+            <input id="join-password" type="password" maxlength="100" autocomplete="off">
+            <p id="join-error" class="error" role="alert" hidden></p>
+            <button class="btn primary" type="submit">Conectar</button>
+          </form>
+        </article>
+      </div>
+    </section>
+
+    <!-- Compartilhando -->
+    <section id="view-host" class="host" hidden>
+      <div class="host-main">
+        <article class="card">
+          <p class="eyebrow"><span class="live-dot" aria-hidden="true"></span> Compartilhando — seu código</p>
+          <p id="host-code" class="big-code" aria-live="polite">— — —</p>
+          <div class="actions">
+            <button id="btn-copy-code" class="btn">Copiar código</button>
+            <button id="btn-copy-link" class="btn">Copiar link</button>
+            <button id="btn-stop" class="btn danger">Encerrar</button>
+          </div>
+          <p id="host-note" class="note">Passe o código ou o link para quem vai assistir. Ninguém entra sem a sua permissão.</p>
+        </article>
+
+        <article class="card">
+          <h2>Pessoas</h2>
+          <ul id="peer-list" class="peer-list"></ul>
+          <p id="peer-empty" class="note">Ninguém pediu acesso ainda.</p>
+          <p id="control-note" class="note control-note" hidden></p>
+        </article>
+      </div>
+
+      <article class="card preview-card">
+        <h2>O que os outros estão vendo</h2>
+        <video id="local-video" class="preview" autoplay playsinline muted></video>
+      </article>
+    </section>
+
+    <!-- Assistindo -->
+    <section id="view-watch" class="watch" hidden>
+      <div id="stage" class="stage">
+        <video id="remote-video" autoplay playsinline muted tabindex="-1"></video>
+        <div id="watch-overlay" class="overlay">
+          <div id="watch-spinner" class="spinner" aria-hidden="true"></div>
+          <p id="watch-status" role="status">Conectando…</p>
+        </div>
+        <div class="stage-bar">
+          <span class="stage-title"><span id="watch-mode">Vendo</span> <b id="watch-code"></b></span>
+          <input id="kbd-proxy" class="kbd-proxy" aria-label="Digitar no computador remoto" autocapitalize="off" autocomplete="off" autocorrect="off" spellcheck="false" tabindex="-1">
+          <button id="btn-keyboard" class="btn small" hidden>Teclado</button>
+          <button id="btn-sound" class="btn small" hidden>Ativar som</button>
+          <button id="btn-full" class="btn small">Tela cheia</button>
+          <button id="btn-leave" class="btn small danger">Sair</button>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
+
+  <script src="app.js"></script>
+</body>
+</html>
