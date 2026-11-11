@@ -6,6 +6,7 @@
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
+    "senha": "node server.js --senha",
     "test": "node --test"
   },
   "engines": {

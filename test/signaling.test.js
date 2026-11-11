@@ -466,3 +466,37 @@ test('a configuração guarda o código fixo e recusa senha curta', () => {
   fs.writeFileSync(file, JSON.stringify({ codigo: first.fixedId, senha: 'senha-bem-longa' }));
   assert.deepEqual(loadConfig(file), { fixedId: first.fixedId, password: 'senha-bem-longa' });
 });
+
+test('arquivo salvo pelo Bloco de Notas (com BOM, código como número) é aceito', () => {
+  const file = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'telalink-')), 'config.json');
+  fs.writeFileSync(file, '﻿{ "codigo": 482913765, "senha": 87654321 }');
+  assert.deepEqual(loadConfig(file), { fixedId: '482913765', password: '87654321' });
+  assert.deepEqual(loadConfig(file), { fixedId: '482913765', password: '87654321' });
+});
+
+test('arquivo com erro não é apagado; o comando de senha refaz', () => {
+  const file = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'telalink-')), 'config.json');
+  const typed = '{ "codigo": "482913765" "senha": "87654321" }'; // faltou a vírgula
+  fs.writeFileSync(file, typed);
+  const warn = console.warn;
+  console.warn = () => {};
+  try {
+    assert.equal(loadConfig(file).password, '');
+    assert.equal(fs.readFileSync(file, 'utf8'), typed);
+    const fixed = loadConfig(file, { senha: '87654321' });
+    assert.equal(fixed.password, '87654321');
+    assert.deepEqual(loadConfig(file), fixed);
+  } finally {
+    console.warn = warn;
+  }
+});
+
+test('o comando de senha mantém o código que já existia', () => {
+  const file = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'telalink-')), 'config.json');
+  const { fixedId } = loadConfig(file);
+  assert.deepEqual(loadConfig(file, { senha: '87654321' }), { fixedId, password: '87654321' });
+  assert.deepEqual(loadConfig(file, { senha: 'outra-senha', codigo: '111222333' }), {
+    fixedId: '111222333',
+    password: 'outra-senha',
+  });
+});

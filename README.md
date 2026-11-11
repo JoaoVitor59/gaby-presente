@@ -48,22 +48,22 @@ Cuidados e limites:
 
 ## Código fixo e entrada sem pedir permissão
 
-Na primeira vez que o servidor roda, ele cria o arquivo `telalink.config.json` na pasta do projeto, com o **código fixo** daquele computador:
+Cada computador tem um **código fixo**, sorteado na primeira vez e guardado em `telalink.config.json` na pasta do projeto. Ele aparece no terminal toda vez que o servidor inicia.
 
-```json
-{
-  "codigo": "482913765",
-  "senha": ""
-}
+Para entrar direto, sem ninguém clicar em **Permitir**, grave uma senha (8 caracteres ou mais) naquele computador:
+
+```bash
+npm run senha SUA-SENHA
+npm start
 ```
 
-- O código é sempre o mesmo naquele computador, desde que a página seja aberta pelo link com chave do terminal. Cada computador tem o seu.
-- Com `"senha"` vazia, cada entrada continua pedindo permissão.
-- Com uma senha de **8 caracteres ou mais**, quem digitar o código e a senha entra direto e já recebe o controle (no Windows, compartilhando a tela inteira). Reinicie o servidor depois de mudar o arquivo.
+A partir daí, quem digitar o código e a senha entra direto e já recebe o controle (no Windows, compartilhando a tela inteira). Para escolher também o código: `npm run senha SUA-SENHA 123456789`.
+
+O código fixo e a senha só valem na página aberta pelo **link com chave** do terminal. No Windows, o `npm start` já abre o navegador nesse link.
 
 Cuidados:
 
-- Com a senha definida, **código + senha dão acesso total ao computador**. Use uma senha longa, que você não usa em outro lugar. Vinte senhas erradas seguidas travam a entrada por senha até o servidor ser reiniciado.
+- Com a senha gravada, **código + senha dão acesso total ao computador**. Use uma senha longa, que você não usa em outro lugar. Vinte senhas erradas seguidas travam a entrada por senha até o servidor ser reiniciado.
 - O arquivo guarda a senha em texto simples e não vai para o GitHub (está no `.gitignore`).
 - O computador ainda precisa estar com o servidor rodando e com **Compartilhar tela** já clicado: o navegador não deixa iniciar o compartilhamento sem alguém clicar na frente dele.
 

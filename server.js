@@ -9,6 +9,7 @@ const fs = require('fs');
 const path = require('path');
 const os = require('os');
 const crypto = require('crypto');
+const { execFile } = require('child_process');
 const { WebSocketServer } = require('ws');
 const { createInjector } = require('./input.js');
 
@@ -80,24 +81,41 @@ function serveStatic(req, res, iceServers) {
 
 // Código fixo e senha deste computador, guardados em telalink.config.json
 // (criado na primeira vez). Sem senha, cada entrada continua pedindo permissão.
-function loadConfig(file = CONFIG_FILE) {
+// `change` grava novos valores ({ senha, codigo }) antes de devolver.
+function loadConfig(file = CONFIG_FILE, change = {}) {
+  const name = path.basename(file);
   let saved = {};
+  let broken = false;
   try {
-    saved = JSON.parse(fs.readFileSync(file, 'utf8'));
+    // o Bloco de Notas pode gravar uma marca invisível (BOM) no começo
+    const parsed = JSON.parse(fs.readFileSync(file, 'utf8').replace(/^\uFEFF/, ''));
+    if (parsed && typeof parsed === 'object') saved = parsed;
   } catch (err) {
-    if (err.code !== 'ENOENT') console.warn(`Não foi possível ler ${path.basename(file)}: ${err.message}`);
+    if (err.code !== 'ENOENT') {
+      broken = true;
+      console.warn(`\nATENÇÃO: ${name} está com erro e foi ignorado (${err.message}).`);
+      console.warn('Para refazer o arquivo, rode:  npm run senha SUA-SENHA\n');
+    }
   }
-  const fixedId = /^\d{9}$/.test(saved.codigo) ? saved.codigo : String(crypto.randomInt(100_000_000, 1_000_000_000));
-  let password = typeof saved.senha === 'string' ? saved.senha : '';
+  const rewrite = Object.keys(change).length > 0;
+  if (rewrite) saved = { ...(broken ? {} : saved), ...change };
+
+  // aceita o código escrito como número ou com espaços
+  const typedId = String(saved.codigo ?? '').replace(/\D/g, '');
+  const fixedId = /^\d{9}$/.test(typedId) ? typedId : String(crypto.randomInt(100_000_000, 1_000_000_000));
+  const typedPassword = saved.senha == null ? '' : String(saved.senha);
+  let password = typedPassword;
   if (password && password.length < MIN_PASSWORD) {
-    console.warn(`A senha em ${path.basename(file)} precisa ter pelo menos ${MIN_PASSWORD} caracteres; ignorada.`);
+    console.warn(`A senha em ${name} precisa ter pelo menos ${MIN_PASSWORD} caracteres; ignorada.`);
     password = '';
   }
-  if (saved.codigo !== fixedId || typeof saved.senha !== 'string') {
+
+  // Nunca regrava por cima de um arquivo com erro: a pessoa perderia o que escreveu.
+  if (rewrite || (!broken && (saved.codigo !== fixedId || saved.senha !== typedPassword))) {
     try {
-      fs.writeFileSync(file, `${JSON.stringify({ codigo: fixedId, senha: saved.senha ?? '' }, null, 2)}\n`);
+      fs.writeFileSync(file, `${JSON.stringify({ codigo: fixedId, senha: typedPassword }, null, 2)}\n`);
     } catch (err) {
-      console.warn(`Não foi possível salvar ${path.basename(file)}: ${err.message}`);
+      console.warn(`Não foi possível salvar ${name}: ${err.message}`);
     }
   }
   return { fixedId, password };
@@ -364,20 +382,55 @@ function createServer({ injector = null, controlKey = null, fixedId = null, pass
   return server;
 }
 
-if (require.main === module) {
+const spaced = (id) => id.replace(/(\d{3})(?=\d)/g, '$1 ');
+
+// npm run senha MINHA-SENHA [CODIGO]  -> grava a senha (e o código) e sai.
+function setPasswordCommand([senha, codigo]) {
+  if (!senha || senha.length < MIN_PASSWORD) {
+    console.error(`Use:  npm run senha SUA-SENHA   (pelo menos ${MIN_PASSWORD} caracteres)`);
+    process.exitCode = 1;
+    return;
+  }
+  const change = { senha };
+  if (codigo !== undefined) {
+    if (!/^\d{9}$/.test(codigo.replace(/\D/g, ''))) {
+      console.error('O código precisa ter exatamente 9 dígitos.');
+      process.exitCode = 1;
+      return;
+    }
+    change.codigo = codigo.replace(/\D/g, '');
+  }
+  const { fixedId } = loadConfig(CONFIG_FILE, change);
+  console.log('Pronto, senha gravada neste computador.');
+  console.log(`  Código fixo: ${spaced(fixedId)}`);
+  console.log(`  Senha:       ${senha}`);
+  console.log('Agora rode:  npm start');
+}
+
+function start() {
   const port = Number(process.env.PORT) || 3000;
   const injector = createInjector();
   const controlKey = crypto.randomBytes(16).toString('hex');
   const { fixedId, password } = loadConfig();
-  createServer({ injector, controlKey, fixedId, password }).listen(port, () => {
+  const localUrl = `http://localhost:${port}/#chave=${controlKey}`;
+  const server = createServer({ injector, controlKey, fixedId, password });
+  server.on('error', (err) => {
+    console.error(
+      err.code === 'EADDRINUSE'
+        ? `A porta ${port} já está em uso: o TelaLink já está aberto em outra janela? Feche a outra e tente de novo.`
+        : `Não foi possível iniciar: ${err.message}`,
+    );
+    process.exitCode = 1;
+  });
+  server.listen(port, () => {
     console.log(`TelaLink rodando na porta ${port}`);
-    console.log(`  Neste computador:  http://localhost:${port}/#chave=${controlKey}`);
+    console.log(`  Neste computador:  ${localUrl}`);
     console.log('                     (link só deste computador; não passe para ninguém)');
-    console.log(`  Código fixo:       ${fixedId.replace(/(\d{3})(?=\d)/g, '$1 ')}`);
+    console.log(`  Código fixo:       ${spaced(fixedId)}`);
     console.log(
       password
-        ? '  Entrada:           direto, com a senha de telalink.config.json'
-        : '  Entrada:           pedindo permissão (defina "senha" em telalink.config.json para entrar direto)',
+        ? '  Entrada:           direto, com a senha gravada neste computador'
+        : '  Entrada:           pedindo permissão (para entrar direto: npm run senha SUA-SENHA)',
     );
     if (!injector) console.log('  Controle remoto:   indisponível (só no Windows)');
     for (const addrs of Object.values(os.networkInterfaces())) {
@@ -387,7 +440,16 @@ if (require.main === module) {
         }
       }
     }
+    // No Windows, já abre o navegador no link certo (o que tem a chave).
+    if (process.platform === 'win32' && !process.env.TELALINK_NO_BROWSER) {
+      execFile('rundll32', ['url.dll,FileProtocolHandler', localUrl], { windowsHide: true }, () => {});
+    }
   });
+}
+
+if (require.main === module) {
+  if (process.argv[2] === '--senha') setPasswordCommand(process.argv.slice(3));
+  else start();
 }
 
 module.exports = { createServer, loadConfig };

@@ -202,7 +202,7 @@
       return 'Controle remoto indisponível: ele só funciona quando o TelaLink está rodando em um computador com Windows.';
     }
     if (host.control !== 'ok') {
-      return 'O controle remoto só pode ser liberado no computador onde o TelaLink está rodando, abrindo o link com chave que aparece no terminal.';
+      return 'Esta página não foi aberta pelo link com chave do terminal, então o código fixo, a senha e o controle remoto não valem aqui. Encerre, abra o link "Neste computador" que aparece no terminal e compartilhe de novo.';
     }
     if (!host.canControl) {
       return 'Para poder dar o controle do mouse e teclado, compartilhe a tela inteira (não uma janela ou aba).';
