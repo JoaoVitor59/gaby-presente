@@ -280,7 +280,13 @@ function createServer({ injector = null, controlKey = null, fixedId = null, pass
         ws.sessionId = id;
         ws.peerId = crypto.randomBytes(8).toString('hex');
         session.viewers.set(ws.peerId, { ws, name, accepted: false, control: false, held: new Set() });
-        send(session.host, { type: 'request', peer: ws.peerId, name, auto: session.unattended });
+        send(session.host, {
+          type: 'request',
+          peer: ws.peerId,
+          name,
+          auto: session.unattended,
+          sameMachine: ws.sameMachine,
+        });
         send(ws, { type: 'waiting' });
         return;
       }
@@ -311,6 +317,9 @@ function createServer({ injector = null, controlKey = null, fixedId = null, pass
         const session = sessions.get(ws.sessionId);
         const viewer = session?.viewers.get(msg.peer);
         if (!session?.control || !viewer?.accepted) return;
+        // Controlar o computador a partir dele mesmo não funciona: o mouse
+        // real é levado para onde aponta na imagem e "foge" da própria imagem.
+        if (viewer.ws.sameMachine && msg.on === true) return;
         viewer.control = msg.on === true;
         if (!viewer.control) releaseHeld(viewer);
         send(viewer.ws, { type: 'control', on: viewer.control });
@@ -342,7 +351,13 @@ function createServer({ injector = null, controlKey = null, fixedId = null, pass
     }
   }
 
-  wss.on('connection', (ws) => {
+  wss.on('connection', (ws, req) => {
+    // Conexão vinda deste mesmo computador (e não repassada por um túnel).
+    const address = req.socket.remoteAddress ?? '';
+    ws.sameMachine =
+      (address === '::1' || address.replace(/^::ffff:/, '').startsWith('127.')) &&
+      !req.headers['x-forwarded-for'] &&
+      !req.headers.forwarded;
     ws.role = null;
     ws.sessionId = null;
     ws.failedJoins = 0;

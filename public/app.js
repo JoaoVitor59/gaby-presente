@@ -121,7 +121,10 @@
     let pending = 0;
 
     for (const [peer, info] of host?.peers ?? []) {
-      const [label, tone] = info.control ? ['Controlando este computador', 'wait'] : PEER_STATUS[info.state];
+      let [label, tone] = info.control ? ['Controlando este computador', 'wait'] : PEER_STATUS[info.state];
+      if (info.sameMachine && info.state === 'connected') {
+        label = 'Assistindo neste mesmo computador — para controlar, entre por outro aparelho';
+      }
       if (info.state === 'pending') pending++;
 
       const item = document.createElement('li');
@@ -150,7 +153,7 @@
         button('Permitir', 'primary', () => acceptPeer(peer));
         button('Recusar', 'danger', () => removePeer(peer));
       } else {
-        if (host.canControl && (info.state === 'connected' || info.control)) {
+        if (host.canControl && !info.sameMachine && (info.state === 'connected' || info.control)) {
           button(info.control ? 'Tirar controle' : 'Dar controle', '', () => toggleControl(peer));
         }
         button('Remover', 'danger', () => removePeer(peer));
@@ -237,12 +240,18 @@
           ? 'Este é o código fixo deste computador. Ninguém entra sem a sua permissão.'
           : 'Passe o código ou o link para quem vai assistir. Ninguém entra sem a sua permissão.';
     } else if (msg.type === 'request') {
-      host.peers.set(msg.peer, { name: msg.name, state: 'pending', link: null, control: false });
+      host.peers.set(msg.peer, {
+        name: msg.name,
+        state: 'pending',
+        link: null,
+        control: false,
+        sameMachine: msg.sameMachine === true,
+      });
       renderPeers();
       // quem entrou com a senha não espera permissão e já recebe o controle
       if (msg.auto) {
         acceptPeer(msg.peer);
-        if (host.canControl) toggleControl(msg.peer);
+        if (host.canControl && !msg.sameMachine) toggleControl(msg.peer);
       }
     } else if (msg.type === 'left') {
       host.peers.get(msg.peer)?.link?.close();

@@ -23,8 +23,12 @@ test.before(async () => {
 test.after(() => server.close());
 
 // Cliente de teste: guarda as mensagens recebidas e deixa esperar a próxima.
-async function client() {
-  const ws = new WebSocket(`ws://${base}/ws`);
+// Por padrão o cliente se apresenta como vindo de outro aparelho (os testes
+// rodam todos na mesma máquina); { sameMachine: true } tira o disfarce.
+const REMOTE = { headers: { 'x-forwarded-for': '203.0.113.7' } };
+
+async function client({ sameMachine = false } = {}) {
+  const ws = new WebSocket(`ws://${base}/ws`, sameMachine ? {} : REMOTE);
   const queue = [];
   const waiters = [];
   ws.on('message', (raw) => {
@@ -356,7 +360,7 @@ async function fixedServer(password) {
   srv.listen(0);
   await once(srv, 'listening');
   const connect = async () => {
-    const ws = new WebSocket(`ws://localhost:${srv.address().port}/ws`);
+    const ws = new WebSocket(`ws://localhost:${srv.address().port}/ws`, REMOTE);
     const queue = [];
     const waiters = [];
     ws.on('message', (raw) => {
@@ -499,4 +503,24 @@ test('o comando de senha mantém o código que já existia', () => {
     fixedId: '111222333',
     password: 'outra-senha',
   });
+});
+
+test('quem assiste no mesmo computador não recebe o controle', async () => {
+  const { host, id } = await hostSession(CONTROL_KEY);
+  const viewer = await client({ sameMachine: true });
+  viewer.send({ type: 'join', id });
+  const request = await host.next();
+  assert.equal(request.sameMachine, true);
+  await viewer.next(); // waiting
+  host.send({ type: 'accept', peer: request.peer });
+  await viewer.next(); // accepted
+
+  injected.length = 0;
+  host.send({ type: 'control', peer: request.peer, on: true });
+  viewer.send({ type: 'input', kind: 'move', x: 0.5, y: 0.5 });
+  viewer.send({ type: 'signal', data: 'marcador' });
+  assert.equal((await host.next()).type, 'signal');
+  assert.deepEqual(injected, []);
+  host.close();
+  viewer.close();
 });
